@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 
@@ -23,7 +24,7 @@ var (
 
 Schema Sheriff performs offline validation of Kubernetes configuration manifests by checking them against OpenApi schemas. No connectivity to the Kubernetes cluster is needed`,
 		Run: func(cmd *cobra.Command, args []string) {
-			exitCode, _ := runValidate(filenames, openApiSchema, crds, recursive)
+			exitCode, _ := runValidate(filenames, openApiSchema, crds, recursive, cmd.InOrStdin())
 			os.Exit(exitCode)
 		},
 	}
@@ -49,7 +50,7 @@ func Execute(version, date, commit string) error {
 	return rootCmd.Execute()
 }
 
-func runValidate(filenames []string, schema string, crds []string, recursive bool) (int, []validate.ValidationResult) {
+func runValidate(filenames []string, schema string, crds []string, recursive bool, inOrStdin io.Reader) (int, []validate.ValidationResult) {
 	totalResults := make([]validate.ValidationResult, 0)
 	fmt.Printf("Validating config in %s against schema in %s\n", utils.JoinNotEmptyStrings(", ", filenames...), openApiSchema)
 	exitCode := 0
@@ -95,6 +96,19 @@ func runValidate(filenames []string, schema string, crds []string, recursive boo
 
 	fmt.Println("Results:")
 	for _, filename := range filenames {
+		// case stdin:
+		if filename == "-" {
+			fileBytes, err := ioutil.ReadAll(inOrStdin)
+			if err != nil {
+				fmt.Printf("Error reading stdin: %s\n", err)
+				return 1, totalResults
+			}
+			validationResults := fileValidator.Validate(fileBytes)
+			outputResult(validationResults)
+			totalResults = append(totalResults, validationResults...)
+			continue
+		}
+
 		err := fs.ApplyToPathWithFilter(filename, recursive, func(file string) error {
 			fmt.Printf("Validating manifests in %s:\n", file)
 			fileBytes, err := ioutil.ReadFile(file)
@@ -106,9 +120,6 @@ func runValidate(filenames []string, schema string, crds []string, recursive boo
 
 			validationResults := fileValidator.Validate(fileBytes)
 			outputResult(validationResults)
-			if containsError(validationResults) {
-				exitCode = 1
-			}
 			totalResults = append(totalResults, validationResults...)
 			return nil
 
@@ -117,6 +128,9 @@ func runValidate(filenames []string, schema string, crds []string, recursive boo
 			fmt.Printf("Error while validating %s: %s\n", filename, err)
 			exitCode = 1
 		}
+	}
+	if containsError(totalResults) {
+		exitCode = 1
 	}
 	return exitCode, totalResults
 }

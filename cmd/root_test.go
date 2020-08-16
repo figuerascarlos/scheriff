@@ -1,12 +1,21 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"testing"
 
 	"github.com/fllaca/scheriff/pkg/validate"
 	"github.com/stretchr/testify/assert"
 )
+
+func openFile(t *testing.T, filename string) io.Reader {
+	reader, err := os.Open(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reader
+}
 
 func TestValidate(t *testing.T) {
 	wd, _ := os.Getwd()
@@ -19,6 +28,7 @@ func TestValidate(t *testing.T) {
 		crds             []string
 		expectedResults  []validate.ValidationResult
 		expectedExitCode int
+		stdin            io.Reader
 	}{
 		{
 			name:             "test valid deploy",
@@ -218,11 +228,23 @@ func TestValidate(t *testing.T) {
 			recursive:        false,
 			expectedResults:  []validate.ValidationResult{},
 		},
+		{
+			name:             "test stdin",
+			filenames:        []string{"-"},
+			schema:           "testdata/schemas/k8s-1.17.0.json",
+			crds:             []string{"testdata/crds/crontab_without_default_val.yaml"},
+			expectedExitCode: 0,
+			recursive:        false,
+			stdin:            openFile(t, "testdata/manifests/crd_v1_crontab.yaml"),
+			expectedResults: []validate.ValidationResult{
+				{"valid", validate.SeverityOK, "my-new-cron-object", "", "stable.example.com/v1/CronTab"},
+			},
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			exitCode, results := runValidate(test.filenames, test.schema, test.crds, test.recursive)
+			exitCode, results := runValidate(test.filenames, test.schema, test.crds, test.recursive, test.stdin)
 			assert.Equal(t, test.expectedExitCode, exitCode)
 			assert.Equal(t, test.expectedResults, results)
 		})
